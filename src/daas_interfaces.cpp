@@ -1,0 +1,32 @@
+#include "daas/daas_interfaces.hpp"
+#include "os/kernel.hpp"
+#include "os/modules/toastmessages.hpp"
+
+void daas_node_event::atsSyncCompleted(din_t din) {
+    system->addNode(din);
+}
+
+void daas_node_event::nodeConnectedToNetwork(din_t sid, din_t din) {
+    system->daasNetworkConnected = true; 
+    ToastManager::getInstance()->show("Node connected to a network", TOAST_INFO, 1000);
+}
+
+void daas_node_event::dinAccepted(din_t din) {
+    system->addNode(din);
+}
+
+void daas_node_event::ddoReceived(int payload_size, typeset_t typeset, din_t din) {
+    // Simple handling: read DDO and store payload as string in Kernel for now
+    DDO* ddo;
+    if (system->getNode()->pull(din, &ddo) == ERROR_NONE) {
+        char* buffer = new char[payload_size + 1];
+        memcpy(buffer, ddo->getPayloadPtr(), payload_size);
+        buffer[payload_size] = '\0'; // Null-terminate
+
+        system->ddoPayload = String(buffer);
+        system->ddoPulled = true;
+
+        delete[] buffer;
+        delete ddo;
+    }
+}

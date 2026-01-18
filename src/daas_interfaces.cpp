@@ -16,12 +16,11 @@ void daas_node_event::dinAccepted(din_t din) {
 }
 
 void daas_node_event::ddoReceived(int payload_size, typeset_t typeset, din_t din) {
-    // Simple handling: read DDO and store payload as string in Kernel for now
     DDO* ddo;
     if (system->getNode()->pull(din, &ddo) == ERROR_NONE) {
         char* buffer = new char[payload_size + 1];
         memcpy(buffer, ddo->getPayloadPtr(), payload_size);
-        buffer[payload_size] = '\0'; // Null-terminate
+        buffer[payload_size] = '\0'; 
 
         system->ddoPayload = String(buffer);
         system->ddoPulled = true;

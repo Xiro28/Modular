@@ -1,6 +1,6 @@
 #pragma once
-#include "../../hal/hal.hpp" // Il tuo HardwareManager
-#include "../../themes/theme_structure.hpp"   // Il tuo ThemePalette
+#include "../../hal/hal.hpp"
+#include "../../themes/theme_structure.hpp"   
 
 enum ToastType {
     TOAST_INFO,
@@ -88,18 +88,9 @@ public:
         // 2. Calcolo Animazione (Slide semplice)
         float goal = isVisible ? targetY : hiddenY;
         
-        // Interpolazione lineare (Lerp) per fluidità
-        // Se la differenza è piccola, scatta alla posizione per evitare micro-movimenti
-        /*if (abs(goal - currentY) < 1.0) {
-            currentY = goal;
-        } else {
-            currentY += (goal - currentY) * 0.2; // 0.2 è la velocità dello slide
-        }*/
 
         currentY = goal;
 
-        // 3. Disegno (Solo se è visibile parzialmente o totalmente)
-        //if (currentY < hiddenY - 1) 
         if (lastState != isVisible || changed)
         {
             draw();

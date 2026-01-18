@@ -73,8 +73,8 @@ private:
 
     void draw() {
         // Clear Keyboard Area
-        hw->tft.fillRect(0, 90, hw->tft.width(), hw->tft.height()-90, theme->BG_COLOR);
-        
+        //hw->tft.fillRect(0, 90, hw->tft.width(), hw->tft.height()-90, theme->BG_COLOR);
+        hw->tft.fillScreen(theme->BG_COLOR);
         // --- ELEGANT INPUT BOX ---
         // A clean line with text above it, rather than a box
         int boxY = 65;

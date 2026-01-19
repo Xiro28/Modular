@@ -55,7 +55,7 @@ public:
 
     void updateContactList() {
         contacts.clear();
-        auto &nodes = system->getDiscoveredNodes();
+        auto nodes = system->getNode()->listNodes();
         for (u32_t idx = 0; idx < nodes.size(); idx++) {
             contacts.push_back({nodes[idx], "Ciao!", true, 0x07E0}); // Verde
         }
@@ -79,13 +79,22 @@ public:
     void onUpdate() override {
         // Gestione Risposta Automatica (Bot)
         uint32_t pulls = 0;
-        if (state == MSG_CHAT && system->ddoPulled) {
+        if (state == MSG_CHAT) {
 
-            currentChat.push_back({system->ddoPayload, false, millis()});
-            contacts[selectedContactIdx].lastMsg = system->ddoPayload;
-            system->ddoPayload = "";
-            system->ddoPulled = false;
-            needsRedraw = true;
+            DDO* ddo;
+
+            if (system->getNode()->pull(contacts[selectedContactIdx].din, &ddo) == ERROR_NONE) {
+                char* buffer = new char[ddo->getPayloadSize() + 1];
+                memcpy(buffer, ddo->getPayloadPtr(), ddo->getPayloadSize());
+                buffer[ddo->getPayloadSize()] = '\0'; 
+
+                currentChat.push_back({String(buffer), false, millis()});
+                contacts[selectedContactIdx].lastMsg = String(buffer);
+
+                delete[] buffer;
+                delete ddo;
+                needsRedraw = true;
+            }
         }
 
         switch (state) {
@@ -331,6 +340,7 @@ private:
         DDO ddo(1);
         ddo.allocatePayload(text.length() + 1);
         memcpy(ddo.getPayloadPtr(), text.c_str(), text.length() + 1);
+        system->getNode()->locate(contacts[selectedContactIdx].din, 1);
         system->getNode()->push(contacts[selectedContactIdx].din>>44, &ddo);
     }
 

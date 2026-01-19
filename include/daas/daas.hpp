@@ -371,7 +371,7 @@ public:
         @see pull
         @end
     */
-    daas_error_t locate(din_t din, int timeout = 1000, int ttl = 10); // Locate node if not inside known table (calls pull)
+    daas_error_t locate(din_t din, int timeout = 1000); // Locate node if not inside known table (calls pull)
 
     /**
         @details It starts a process to locate any node with the specified feature.

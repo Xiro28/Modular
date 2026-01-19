@@ -16,16 +16,4 @@ void daas_node_event::dinAccepted(din_t din) {
 }
 
 void daas_node_event::ddoReceived(int payload_size, typeset_t typeset, din_t din) {
-    DDO* ddo;
-    if (system->getNode()->pull(din, &ddo) == ERROR_NONE) {
-        char* buffer = new char[payload_size + 1];
-        memcpy(buffer, ddo->getPayloadPtr(), payload_size);
-        buffer[payload_size] = '\0'; 
-
-        system->ddoPayload = String(buffer);
-        system->ddoPulled = true;
-
-        delete[] buffer;
-        delete ddo;
-    }
 }

@@ -1,0 +1,9 @@
+dependencies:
+  lvgl/lvgl: ^8.3.0
+  LovyanGFX:
+    git: https://github.com/lovyan03/LovyanGFX.git
+
+  esp32_p4_jc4880p433c_bsp:
+    git: https://github.com/csvke/esp32_p4_jc4880p433c_bsp.git
+  espressif/esp_hosted: '*'
+  espressif/esp-extconn: '*'

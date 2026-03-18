@@ -1,506 +1,474 @@
 #pragma once
 #include "os/interfaces/application_interface.hpp"
-
+#include <string>
 #include <vector>
-#include <os/modules/toastmessages.hpp>
-
-
-// Stati interni dell'App Settings
-enum SettingsState {
-    PAGE_MAIN,
-    PAGE_WIFI_SCAN,
-    PAGE_WIFI_KEYBOARD,
-    PAGE_DAAS,
-    PAGE_STATS
-};
+#include "esp_system.h"
+#include "esp_netif.h"
+#include "esp_mac.h"
+#include "esp_wifi.h"
+#include "lvgl.h"
 
 class SettingsApp : public Application {
 private:
-    SettingsState currentState = PAGE_MAIN;
-    bool currentSessionSaved = true;
-
-
-    // --- State Data ---
-    bool btEnabled = false;       
-    uint64_t currentDIN = 123456789; 
-    String targetSSID = "";       
-    String inputBuffer = "";      
+    lv_obj_t* screen = nullptr;
+    lv_obj_t* content_area = nullptr;
     
-    unsigned long lastStatsUpdate = 0;
-
-    // Layout Constants
-    const int ITEM_H = 50;
-
-    // --- GRAPHIC HELPERS ---
+    lv_obj_t* main_p = nullptr;
+    lv_obj_t* wifi_p = nullptr;
+    lv_obj_t* bt_p = nullptr;
+    lv_obj_t* daas_p = nullptr;
+    lv_obj_t* stat_p = nullptr;
     
-    void drawTile(int index, const char* label, const char* status, uint16_t accentColor) {
-        // Grid Logic: 2 Columns. 
-        // Index 0: Top Left, 1: Top Right, 2: Bottom Left, 3: Bottom Right
-        int col = index % 2;
-        int row = index / 2;
+    lv_obj_t* dot_wifi = nullptr;
+    lv_obj_t* dot_bt = nullptr;
+    lv_obj_t* dot_daas = nullptr;
+    
+    lv_obj_t* stat_lbl = nullptr;
+    lv_chart_series_t* ram_series = nullptr;
+    lv_obj_t* ram_chart = nullptr;
+    lv_obj_t* wifi_list = nullptr;
+    lv_obj_t* bt_list = nullptr;
+    
+    uint32_t last_tick = 0;
 
-        int margin = 10;
-        int w = (hw->tft.width() - (margin * 3)) / 2; // Calculate width dynamically
-        int h = 90; // Fixed height for tiles
-        int x = margin + (col * (w + margin));
-        int y = 60 + (row * (h + margin)); // Start Y at 60
+    // --- FUNZIONI HARDWARE REALI ---
 
-        // 1. Shadow
-        hw->tft.fillRoundRect(x, y+4, w, h, 8, theme->PANEL_SHADOW);
-        // 2. Main Body
-        hw->tft.fillRoundRect(x, y, w, h, 8, theme->PANEL_BG);
-
-        // 3. Status Dot/Bar
-        hw->tft.fillRoundRect(x + 10, y + 10, 30, 6, 3, accentColor);
-
-        // 4. Label (Bottom of tile)
-        hw->tft.setTextColor(theme->TEXT_MAIN, theme->PANEL_BG);
-        hw->tft.setTextDatum(textdatum_t::bottom_left);
-        hw->tft.drawString(label, x + 10, y + h - 10);
-
-        // 5. Status Text (Middle)
-        hw->tft.setTextColor(theme->TEXT_MUTED, theme->PANEL_BG);
-        hw->tft.setTextDatum(textdatum_t::top_left);
-        hw->tft.drawString(status, x + 10, y + 25);
+    std::string get_wifi_ip() {
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if(netif) {
+            esp_netif_ip_info_t ip_info;
+            if(esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+                char str[16];
+                esp_ip4addr_ntoa(&ip_info.ip, str, 16);
+                if(std::string(str) != "0.0.0.0") return std::string(str);
+            }
+        }
+        return "Not Connected";
     }
 
-    void drawListItem(int index, const char* label, const char* value, bool isToggle = false, bool toggleState = false) {
-        int y = 50 + (index * ITEM_H);
-        int w = hw->tft.width();
-        
-        // Background
-        hw->tft.fillRect(5, y, w - 10, ITEM_H - 5, theme->PANEL_BG);
-        hw->tft.drawRect(5, y, w - 10, ITEM_H - 5, theme->BORDER_COLOR);
-        
-        // Label
-        hw->tft.setTextColor(theme->TEXT_MAIN, theme->PANEL_BG);
-        hw->tft.setTextDatum(textdatum_t::middle_left);
-        hw->tft.drawString(label, 15, y + (ITEM_H/2) - 2);
+    std::string get_bt_mac() {
+        uint8_t mac[6];
+        if (esp_read_mac(mac, ESP_MAC_BT) == ESP_OK) {
+            char str[20];
+            snprintf(str, sizeof(str), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            return std::string(str);
+        }
+        return "Unknown MAC";
+    }
 
-        // Value or Toggle
-        if (isToggle) {
-            int toggleX = w - 50; 
-            uint16_t tColor = toggleState ? theme->ACCENT_PRIMARY : theme->TEXT_MUTED;
-            hw->tft.fillRoundRect(toggleX, y + 10, 35, 20, 10, tColor);
-            hw->tft.fillCircle(toggleState ? toggleX + 25 : toggleX + 10, y + 20, 8, theme->TEXT_MAIN);
+    static void sys_enable_daas_driver(const char* type, const char* address) {
+        // Questa chiamata deve finire nel tuo modulo DaaS
+        printf("\n[DaaS KERNEL] -> Abilitazione Driver: %s\n", type);
+        printf("[DaaS KERNEL] -> Indirizzo Registrato: %s\n\n", address);
+    }
+
+    static void back_cb(lv_event_t* e) {
+        SettingsApp* app = (SettingsApp*)lv_event_get_user_data(e);
+        if (!lv_obj_has_flag(app->main_p, LV_OBJ_FLAG_HIDDEN)) {
+            app->system->launchApp(0);
         } else {
-            hw->tft.setTextColor(theme->TEXT_MAIN, theme->PANEL_BG);
-            hw->tft.setTextDatum(textdatum_t::middle_right);
-            hw->tft.drawString(value, w - 15, y + (ITEM_H/2) - 2);
+            lv_obj_add_flag(app->wifi_p, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(app->bt_p, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(app->daas_p, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(app->stat_p, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(app->main_p, LV_OBJ_FLAG_HIDDEN);
+            app->refresh_lines();
         }
     }
 
-    // Modern Header (No block background)
-    void drawHeader(const char* title, bool showBack = true, bool clearBg = true) {
-        if (clearBg) {
-            hw->tft.fillScreen(theme->BG_COLOR);
+    lv_obj_t* create_card(lv_obj_t* parent, const char* icon, const char* title, const char* subtitle, lv_obj_t** dot_ptr) {
+        lv_obj_t* card = lv_btn_create(parent);
+        lv_obj_set_size(card, LV_PCT(100), 80);
+        lv_obj_set_style_bg_color(card, lv_color_hex(0x1B1433), 0);
+        lv_obj_set_style_radius(card, 16, 0);
+        lv_obj_set_style_border_width(card, 1, 0);
+        lv_obj_set_style_border_color(card, lv_color_hex(0x2B1E4A), 0);
+        lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_OFF);
         
-            // Large Modern Title
-            hw->tft.setTextColor(theme->TEXT_MAIN, theme->BG_COLOR);
-            hw->tft.setTextDatum(textdatum_t::middle_left);
-            // Assuming you have a larger font, if not, standard is fine
-            hw->tft.drawString(title, showBack ? 30 : 15, 30);
-            
-            // Divider
-            hw->tft.drawLine(15, 50, 60, 50, theme->ACCENT_PRIMARY); // Small accent line
-        }
+        lv_obj_t* icn_bg = lv_obj_create(card);
+        lv_obj_set_size(icn_bg, 50, 50);
+        lv_obj_set_style_bg_color(icn_bg, lv_color_hex(0x2B1E4A), 0);
+        lv_obj_set_style_radius(icn_bg, 12, 0);
+        lv_obj_set_style_border_width(icn_bg, 0, 0);
+        lv_obj_align(icn_bg, LV_ALIGN_LEFT_MID, 5, 0);
+        
+        lv_obj_t* icn = lv_label_create(icn_bg);
+        lv_label_set_text(icn, icon);
+        lv_obj_set_style_text_color(icn, lv_color_hex(0xA855F7), 0);
+        lv_obj_center(icn);
 
-        if (showBack) {
-            hw->tft.drawString("<", 10, 30);
+        lv_obj_t* t = lv_label_create(card);
+        lv_label_set_text(t, title);
+        lv_obj_set_style_text_color(t, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(t, LV_ALIGN_LEFT_MID, 70, -10);
+
+        lv_obj_t* st = lv_label_create(card);
+        lv_label_set_text(st, subtitle);
+        lv_obj_set_style_text_color(st, lv_color_hex(0xA192BB), 0);
+        lv_obj_align(st, LV_ALIGN_LEFT_MID, 70, 15);
+
+        if (dot_ptr) {
+            *dot_ptr = lv_obj_create(card);
+            lv_obj_set_size(*dot_ptr, 14, 14);
+            lv_obj_align(*dot_ptr, LV_ALIGN_RIGHT_MID, -15, 0);
+            lv_obj_set_style_bg_color(*dot_ptr, lv_color_hex(0xEF4444), 0);
+            lv_obj_set_style_radius(*dot_ptr, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_border_width(*dot_ptr, 2, 0);
+            lv_obj_set_style_border_color(*dot_ptr, lv_color_hex(0x1B1433), 0);
         }
+        return card;
     }
 
-    void drawButton(int x, int y, int w, int h, const char* label, uint16_t bgCol, uint16_t txtCol) {
-        // Shadow
-        hw->tft.fillRoundRect(x, y + 4, w, h, 8, theme->PANEL_SHADOW);
-        // Body
-        hw->tft.fillRoundRect(x, y, w, h, 8, bgCol);
-        // Text
-        hw->tft.setTextColor(txtCol, bgCol);
-        hw->tft.setTextDatum(textdatum_t::middle_center);
-        hw->tft.drawString(label, x + w/2, y + h/2);
-        hw->tft.setTextDatum(textdatum_t::top_left);
+    void refresh_lines() {
+        if(dot_wifi) lv_obj_set_style_bg_color(dot_wifi, lv_color_hex(system->wifiConnected ? 0x10B981 : 0xEF4444), 0);
+        if(dot_bt) lv_obj_set_style_bg_color(dot_bt, lv_color_hex(system->btEnabled ? 0x10B981 : 0xEF4444), 0);
+        if(dot_daas) lv_obj_set_style_bg_color(dot_daas, lv_color_hex(system->daasConnected ? 0x10B981 : 0xEF4444), 0);
+    }
+
+    lv_obj_t* create_sub_page() {
+        lv_obj_t* p = lv_obj_create(content_area);
+        lv_obj_set_size(p, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_bg_opa(p, 0, 0);
+        lv_obj_set_style_border_width(p, 0, 0);
+        lv_obj_set_style_pad_all(p, 0, 0);
+        lv_obj_set_flex_flow(p, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_gap(p, 10, 0);
+        lv_obj_set_scrollbar_mode(p, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_add_flag(p, LV_OBJ_FLAG_HIDDEN);
+        return p;
+    }
+
+    // --- COSTRUZIONE SOTTOMENU CON DATI REALI ---
+
+    void build_wifi_page() {
+        lv_obj_t* header = lv_obj_create(wifi_p);
+        lv_obj_set_size(header, LV_PCT(100), 75);
+        lv_obj_set_style_bg_color(header, lv_color_hex(0x1B1433), 0);
+        lv_obj_set_style_radius(header, 16, 0);
+        lv_obj_set_style_border_width(header, 0, 0);
+        lv_obj_set_scrollbar_mode(header, LV_SCROLLBAR_MODE_OFF);
+
+        lv_obj_t* lbl = lv_label_create(header);
+        lv_label_set_text(lbl, "Wi-Fi Power");
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 15, 10);
+
+        lv_obj_t* ip_lbl = lv_label_create(header);
+        std::string ip = "IP: " + get_wifi_ip();
+        lv_label_set_text(ip_lbl, ip.c_str());
+        lv_obj_set_style_text_color(ip_lbl, lv_color_hex(0x10B981), 0);
+        lv_obj_align(ip_lbl, LV_ALIGN_BOTTOM_LEFT, 15, -10);
+
+        lv_obj_t* sw = lv_switch_create(header);
+        lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -15, 0);
+        if(system->wifiConnected) lv_obj_add_state(sw, LV_STATE_CHECKED);
+        lv_obj_set_style_bg_color(sw, lv_color_hex(0x10B981), LV_PART_INDICATOR | LV_STATE_CHECKED);
+
+        lv_obj_t* scan_btn = lv_btn_create(wifi_p);
+        lv_obj_set_size(scan_btn, LV_PCT(100), 50);
+        lv_obj_set_style_bg_color(scan_btn, lv_color_hex(0x3B82F6), 0);
+        lv_obj_set_style_radius(scan_btn, 12, 0);
+        lv_obj_t* scan_lbl = lv_label_create(scan_btn);
+        lv_label_set_text(scan_lbl, LV_SYMBOL_REFRESH " Scan Networks");
+        lv_obj_center(scan_lbl);
+
+        wifi_list = lv_obj_create(wifi_p);
+        lv_obj_set_width(wifi_list, LV_PCT(100));
+        lv_obj_set_flex_grow(wifi_list, 1);
+        lv_obj_set_style_bg_opa(wifi_list, 0, 0);
+        lv_obj_set_style_border_width(wifi_list, 0, 0);
+        lv_obj_set_flex_flow(wifi_list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_all(wifi_list, 0, 0);
+        lv_obj_set_scrollbar_mode(wifi_list, LV_SCROLLBAR_MODE_OFF);
+
+        // EVENTO SCANSIONE REALE
+        lv_obj_add_event_cb(scan_btn, [](lv_event_t* e){
+            SettingsApp* a = (SettingsApp*)lv_event_get_user_data(e);
+            lv_obj_clean(a->wifi_list);
+            
+            lv_obj_t* loading = lv_label_create(a->wifi_list);
+            lv_label_set_text(loading, "Scanning... (Real Data)");
+            lv_obj_set_style_text_color(loading, lv_color_hex(0x8B7CA6), 0);
+            lv_obj_align(loading, LV_ALIGN_CENTER, 0, 20);
+
+            // Avvio scansione REALE asincrona
+            wifi_scan_config_t scan_config = {};
+            scan_config.ssid = 0;
+            scan_config.bssid = 0;
+            scan_config.channel = 0;
+            scan_config.show_hidden = false;
+            
+            esp_err_t err = esp_wifi_scan_start(&scan_config, false);
+
+            if (err != ESP_OK) {
+                lv_label_set_text_fmt(loading, "Wi-Fi Error: %d", err);
+                return;
+            }
+
+            // Polling asincrono sui risultati
+            lv_timer_create([](lv_timer_t* t){
+                SettingsApp* app = (SettingsApp*)t->user_data;
+                uint16_t ap_count = 0;
+                
+                esp_err_t ret = esp_wifi_scan_get_ap_num(&ap_count);
+                
+                if (ret == ESP_OK) {
+                    lv_obj_clean(app->wifi_list);
+                    
+                    if (ap_count == 0) {
+                        lv_obj_t* empty = lv_label_create(app->wifi_list);
+                        lv_label_set_text(empty, "No networks found.");
+                        lv_obj_align(empty, LV_ALIGN_CENTER, 0, 20);
+                    } else {
+                        uint16_t max_aps = (ap_count > 15) ? 15 : ap_count;
+                        wifi_ap_record_t* ap_records = new wifi_ap_record_t[max_aps];
+                        
+                        if (esp_wifi_scan_get_ap_records(&max_aps, ap_records) == ESP_OK) {
+                            for(int i = 0; i < max_aps; i++) {
+                                lv_obj_t* net = lv_btn_create(app->wifi_list);
+                                lv_obj_set_size(net, LV_PCT(100), 60);
+                                lv_obj_set_style_bg_color(net, lv_color_hex(0x150A21), 0);
+                                lv_obj_set_style_border_width(net, 0, 0);
+                                
+                                lv_obj_t* nl = lv_label_create(net);
+                                lv_label_set_text(nl, (char*)ap_records[i].ssid);
+                                lv_obj_align(nl, LV_ALIGN_LEFT_MID, 10, 0);
+                                
+                                lv_obj_t* ic = lv_label_create(net);
+                                char rssi_str[32];
+                                snprintf(rssi_str, sizeof(rssi_str), "%d dBm " LV_SYMBOL_WIFI, ap_records[i].rssi);
+                                lv_label_set_text(ic, rssi_str);
+                                lv_obj_set_style_text_color(ic, lv_color_hex(0x8B7CA6), 0);
+                                lv_obj_align(ic, LV_ALIGN_RIGHT_MID, -10, 0);
+                            }
+                        }
+                        delete[] ap_records;
+                    }
+                    lv_timer_del(t); // Fine scansione, uccidi il timer
+                } else if (ret != ESP_ERR_WIFI_STATE) {
+                    lv_obj_clean(app->wifi_list);
+                    lv_obj_t* err_lbl = lv_label_create(app->wifi_list);
+                    lv_label_set_text(err_lbl, "Scan failed.");
+                    lv_timer_del(t);
+                }
+            }, 500, a); 
+        }, LV_EVENT_CLICKED, this);
+    }
+
+    void build_bt_page() {
+        lv_obj_t* header = lv_obj_create(bt_p);
+        lv_obj_set_size(header, LV_PCT(100), 75);
+        lv_obj_set_style_bg_color(header, lv_color_hex(0x1B1433), 0);
+        lv_obj_set_style_radius(header, 16, 0);
+        lv_obj_set_style_border_width(header, 0, 0);
+        lv_obj_set_scrollbar_mode(header, LV_SCROLLBAR_MODE_OFF);
+
+        lv_obj_t* lbl = lv_label_create(header);
+        lv_label_set_text(lbl, "Bluetooth Power");
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 15, 10);
+
+        lv_obj_t* mac_lbl = lv_label_create(header);
+        std::string mac = "MAC: " + get_bt_mac();
+        lv_label_set_text(mac_lbl, mac.c_str());
+        lv_obj_set_style_text_color(mac_lbl, lv_color_hex(0x8B7CA6), 0);
+        lv_obj_align(mac_lbl, LV_ALIGN_BOTTOM_LEFT, 15, -10);
+
+        lv_obj_t* sw = lv_switch_create(header);
+        lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -15, 0);
+        lv_obj_set_style_bg_color(sw, lv_color_hex(0x3B82F6), LV_PART_INDICATOR | LV_STATE_CHECKED);
+
+        lv_obj_t* vis_btn = lv_btn_create(bt_p);
+        lv_obj_set_size(vis_btn, LV_PCT(100), 50);
+        lv_obj_set_style_bg_color(vis_btn, lv_color_hex(0x9333EA), 0);
+        lv_obj_set_style_radius(vis_btn, 12, 0);
+        lv_obj_t* vis_lbl = lv_label_create(vis_btn);
+        lv_label_set_text(vis_lbl, LV_SYMBOL_EYE_OPEN " Make Discoverable");
+        lv_obj_center(vis_lbl);
+
+        lv_obj_t* title = lv_label_create(bt_p);
+        lv_label_set_text(title, "Bluetooth functions require GAP init");
+        lv_obj_set_style_text_color(title, lv_color_hex(0x8B7CA6), 0);
+    }
+    
+    void build_daas_page() {
+        lv_obj_t* title = lv_label_create(daas_p);
+        lv_label_set_text(title, "DaaS Driver Config");
+        lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+
+        lv_obj_t* d_wifi = lv_btn_create(daas_p);
+        lv_obj_set_size(d_wifi, LV_PCT(100), 70);
+        lv_obj_set_style_bg_color(d_wifi, lv_color_hex(0x1B1433), 0);
+        lv_obj_set_style_radius(d_wifi, 16, 0);
+        lv_obj_t* lw = lv_label_create(d_wifi);
+        lv_label_set_text(lw, "Enable Driver Wi-Fi");
+        lv_obj_align(lw, LV_ALIGN_LEFT_MID, 10, 0);
+        
+        lv_obj_add_event_cb(d_wifi, [](lv_event_t* e){
+            SettingsApp* a = (SettingsApp*)lv_event_get_user_data(e);
+            std::string ip_port = a->get_wifi_ip() + ":" + std::to_string(random() % 1000 + 8000);
+            sys_enable_daas_driver("WIFI", ip_port.c_str());
+            lv_obj_set_style_bg_color(lv_event_get_target(e), lv_color_hex(0x10B981), 0);
+        }, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* d_bt = lv_btn_create(daas_p);
+        lv_obj_set_size(d_bt, LV_PCT(100), 70);
+        lv_obj_set_style_bg_color(d_bt, lv_color_hex(0x1B1433), 0);
+        lv_obj_set_style_radius(d_bt, 16, 0);
+        lv_obj_t* lb = lv_label_create(d_bt);
+        lv_label_set_text(lb, "Enable Driver Bluetooth");
+        lv_obj_align(lb, LV_ALIGN_LEFT_MID, 10, 0);
+        
+        lv_obj_add_event_cb(d_bt, [](lv_event_t* e){
+            SettingsApp* a = (SettingsApp*)lv_event_get_user_data(e);
+            std::string mac = a->get_bt_mac();
+            sys_enable_daas_driver("BLUETOOTH", mac.c_str());
+            lv_obj_set_style_bg_color(lv_event_get_target(e), lv_color_hex(0x3B82F6), 0);
+        }, LV_EVENT_CLICKED, this);
+    }
+
+    void build_stats_page() {
+        lv_obj_t* arc_ctn = lv_obj_create(stat_p);
+        lv_obj_set_size(arc_ctn, LV_PCT(100), 160);
+        lv_obj_set_style_bg_color(arc_ctn, lv_color_hex(0x1B1433), 0);
+        lv_obj_set_style_border_width(arc_ctn, 0, 0);
+        lv_obj_set_style_radius(arc_ctn, 16, 0);
+
+        lv_obj_t* arc = lv_arc_create(arc_ctn);
+        lv_obj_set_size(arc, 130, 130);
+        lv_arc_set_rotation(arc, 270);
+        lv_arc_set_bg_angles(arc, 0, 360);
+        lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+        lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_center(arc);
+        lv_obj_set_style_arc_color(arc, lv_color_hex(0x2B1E4A), LV_PART_MAIN);
+        lv_obj_set_style_arc_color(arc, lv_color_hex(0x10B981), LV_PART_INDICATOR);
+        lv_obj_set_style_arc_width(arc, 15, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(arc, 15, LV_PART_INDICATOR);
+        lv_arc_set_value(arc, 50);
+
+        stat_lbl = lv_label_create(arc);
+        lv_label_set_text(stat_lbl, "RAM");
+        lv_obj_set_style_text_color(stat_lbl, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_center(stat_lbl);
+
+        ram_chart = lv_chart_create(stat_p);
+        lv_obj_set_width(ram_chart, LV_PCT(100));
+        lv_obj_set_flex_grow(ram_chart, 1); 
+        lv_obj_set_style_bg_color(ram_chart, lv_color_hex(0x1B1433), 0);
+        lv_obj_set_style_border_width(ram_chart, 0, 0);
+        lv_obj_set_style_radius(ram_chart, 16, 0);
+        
+        lv_chart_set_type(ram_chart, LV_CHART_TYPE_LINE);
+        lv_obj_set_style_line_width(ram_chart, 3, LV_PART_ITEMS);
+        lv_obj_set_style_width(ram_chart, 0, LV_PART_INDICATOR);
+        lv_obj_set_style_height(ram_chart, 0, LV_PART_INDICATOR);
+        
+        ram_series = lv_chart_add_series(ram_chart, lv_color_hex(0x9333EA), LV_CHART_AXIS_PRIMARY_Y);
+        lv_chart_set_point_count(ram_chart, 20);
+        lv_chart_set_update_mode(ram_chart, LV_CHART_UPDATE_MODE_SHIFT);
+        lv_obj_set_style_bg_opa(ram_chart, LV_OPA_30, LV_PART_ITEMS); 
+        lv_obj_set_style_bg_color(ram_chart, lv_color_hex(0x9333EA), LV_PART_ITEMS);
     }
 
 public:
-    SettingsApp() : Application(1) {} // ID 1
+    SettingsApp() : Application(1) {}
     
     void onStart() override {
-        currentState = PAGE_MAIN;
-        needsRedraw = true;
+        screen = lv_obj_create(NULL);
+        lv_obj_set_style_bg_color(screen, lv_color_hex(0x05020A), 0);
+        lv_obj_set_scrollbar_mode(screen, LV_SCROLLBAR_MODE_OFF);
+
+        lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(screen, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_all(screen, 10, 0);
+        lv_obj_set_style_pad_gap(screen, 10, 0);
+
+        lv_obj_t* head = lv_obj_create(screen);
+        lv_obj_set_size(head, LV_PCT(100), 50);
+        lv_obj_set_style_bg_opa(head, 0, 0);
+        lv_obj_set_style_border_width(head, 0, 0);
+        lv_obj_set_scrollbar_mode(head, LV_SCROLLBAR_MODE_OFF);
+        
+        lv_obj_t* back = lv_btn_create(head);
+        lv_obj_set_size(back, 50, 50);
+        lv_obj_align(back, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_style_bg_color(back, lv_color_hex(0x1B1433), 0);
+        lv_obj_set_style_radius(back, LV_RADIUS_CIRCLE, 0);
+        lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, this);
+        lv_obj_t* back_lbl = lv_label_create(back);
+        lv_label_set_text(back_lbl, LV_SYMBOL_LEFT);
+        lv_obj_center(back_lbl);
+
+        lv_obj_t* title = lv_label_create(head);
+        lv_label_set_text(title, "Settings");
+        lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+
+        content_area = lv_obj_create(screen);
+        lv_obj_set_width(content_area, LV_PCT(100));
+        lv_obj_set_flex_grow(content_area, 1); 
+        lv_obj_set_style_bg_opa(content_area, 0, 0);
+        lv_obj_set_style_border_width(content_area, 0, 0);
+        lv_obj_set_scrollbar_mode(content_area, LV_SCROLLBAR_MODE_OFF);
+
+        main_p = lv_obj_create(content_area);
+        lv_obj_set_size(main_p, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_bg_opa(main_p, 0, 0);
+        lv_obj_set_style_border_width(main_p, 0, 0);
+        lv_obj_set_flex_flow(main_p, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_gap(main_p, 15, 0);
+        lv_obj_set_scrollbar_mode(main_p, LV_SCROLLBAR_MODE_OFF);
+
+        lv_obj_t* c1 = create_card(main_p, LV_SYMBOL_WIFI, "Wi-Fi", "Networking & Scans", &dot_wifi);
+        lv_obj_add_event_cb(c1, [](lv_event_t* e){
+            SettingsApp* a = (SettingsApp*)lv_event_get_user_data(e);
+            lv_obj_add_flag(a->main_p, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(a->wifi_p, LV_OBJ_FLAG_HIDDEN);
+        }, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* c2 = create_card(main_p, LV_SYMBOL_BLUETOOTH, "Bluetooth", "Discover & Pair", &dot_bt);
+        lv_obj_add_event_cb(c2, [](lv_event_t* e){
+            SettingsApp* a = (SettingsApp*)lv_event_get_user_data(e);
+            lv_obj_add_flag(a->main_p, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(a->bt_p, LV_OBJ_FLAG_HIDDEN);
+        }, LV_EVENT_CLICKED, this);
+        
+        lv_obj_t* c3 = create_card(main_p, LV_SYMBOL_SHUFFLE, "DaaS Node", "Driver Config", &dot_daas);
+        lv_obj_add_event_cb(c3, [](lv_event_t* e){
+            SettingsApp* a = (SettingsApp*)lv_event_get_user_data(e);
+            lv_obj_add_flag(a->main_p, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(a->daas_p, LV_OBJ_FLAG_HIDDEN);
+        }, LV_EVENT_CLICKED, this);
+
+        lv_obj_t* c4 = create_card(main_p, LV_SYMBOL_LIST, "System Monitor", "RAM & Performance", nullptr);
+        lv_obj_add_event_cb(c4, [](lv_event_t* e){
+            SettingsApp* a = (SettingsApp*)lv_event_get_user_data(e);
+            lv_obj_add_flag(a->main_p, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(a->stat_p, LV_OBJ_FLAG_HIDDEN);
+        }, LV_EVENT_CLICKED, this);
+
+        wifi_p = create_sub_page(); build_wifi_page();
+        bt_p = create_sub_page();   build_bt_page();
+        daas_p = create_sub_page(); build_daas_page();
+        stat_p = create_sub_page(); build_stats_page();
+
+        refresh_lines();
+        lv_scr_load(screen);
     }
 
     void onUpdate() override {
-        // --- Auto-Save Logic ---
-        // If we are connected successfully but haven't saved this session yet
-        if (WiFi.status() == WL_CONNECTED && !currentSessionSaved) {
-            currentSessionSaved = system->getHW()->saveCurrentWifi();
-            needsRedraw = true; // Refresh UI to show connection status
-        }
-
-        switch (currentState) {
-            case PAGE_MAIN:
-                if (needsRedraw) { drawMainPage(); needsRedraw = false; }
-                handleMainTouch();
-                break;
-            case PAGE_WIFI_SCAN:
-                if (needsRedraw) { drawWifiPage(); needsRedraw = false; }
-                handleWifiTouch();
-                break;
-            case PAGE_WIFI_KEYBOARD:
-                if (needsRedraw) { 
-                    system->getKeyboard()->begin("Enter Wi-Fi Password:");
-                    needsRedraw = false; 
-                }
-                
-                if (system->getKeyboard()->isDone()) {
-                    if (!system->getKeyboard()->wasCancelled()) {
-                        String password = system->getKeyboard()->getResult();
-                        
-                        // Initiate connection
-                        WiFi.disconnect(); // Start fresh each time
-                        WiFi.begin(targetSSID.c_str(), password.c_str());
-
-                        
-                        // Reset save flag so onUpdate knows to save when connection succeeds
-                        currentSessionSaved = false; 
-                    }
-                    currentState = PAGE_MAIN;
-                    needsRedraw = true;
-                }
-
-                system->getKeyboard()->update();
-                break;
-            case PAGE_DAAS:
-                if (needsRedraw) { drawDaasPage(); needsRedraw = false; }
-                handleDaasTouch();
-                break;
-            case PAGE_STATS:
-                if (millis() - lastStatsUpdate > 1000 || needsRedraw) {
-                    drawStatsPage();
-                    needsRedraw = false;
-                    lastStatsUpdate = millis();
-                }
-                handleStatsTouch();
-                break;
-        }
-    }
-
-    void onExit() override { }
-    void onDraw() override { }
-
-    void drawMainPage() {
-        drawHeader("DASHBOARD");
-
-        // 1. Wi-Fi Tile
-        bool wifiCon = (WiFi.status() == WL_CONNECTED);
-        drawTile(0, "Wi-Fi", wifiCon ? "Online" : "Offline", wifiCon ? theme->ACCENT_PRIMARY : theme->TEXT_MUTED);
-
-        // 2. Bluetooth Tile
-        drawTile(1, "Bluetooth", btEnabled ? "Active" : "Disabled", btEnabled ? theme->ACCENT_PRIMARY : theme->TEXT_MUTED);
-
-        // 3. DaaS Tile
-        drawTile(2, "DaaS Cloud", system->daasNetworkConnected ? "Connected" : "Configure", system->daasNetworkConnected ? theme->ACCENT_PRIMARY : theme->ACCENT_WARN);
-
-        // 4. Stats Tile
-        drawTile(3, "System", "View Stats", theme->ACCENT_ALERT);
-    }
-
-    void drawWifiPage() {
-        drawHeader("SCANNING...");
-        int n = WiFi.scanNetworks();
-        hw->tft.fillScreen(theme->BG_COLOR);
-        drawHeader("WI-FI");
-        
-        for (int i = 0; i < n && i < 5; ++i) {
-             String ssid = WiFi.SSID(i);
-             // Truncate long SSIDs
-             if(ssid.length() > 10) ssid = ssid.substring(0, 9) + ".";
-             String label = ssid + " (" + String(WiFi.RSSI(i)) + ")";
-             drawListItem(i, label.c_str(), ">");
-        }
-        if (n == 0) hw->tft.drawString("No AP Found", 20, 60);
-    }
-
-    void drawDaasPage() {
-        drawHeader("DaaS CONFIG", true); // showBack = true
-        int w = hw->tft.width();
-
-        // --- 1. CONNECTION STATUS CARD ---
-        int cardY = 60;
-        int cardH = 90;
-        
-        hw->tft.fillRoundRect(10, cardY, w - 20, cardH, 8, theme->PANEL_BG);
-        hw->tft.drawRoundRect(10, cardY, w - 20, cardH, 8, theme->BORDER_COLOR);
-
-        // Determine active technology
-        bool wifiReady = (WiFi.status() == WL_CONNECTED);
-        bool btReady = btEnabled; 
-
-        // Status Indicator Circle
-        uint16_t statusColor = (wifiReady || btReady) ? theme->ACCENT_PRIMARY : theme->ACCENT_ALERT;
-        hw->tft.fillCircle(30, cardY + 25, 6, statusColor);
-
-        hw->tft.setTextColor(theme->TEXT_MAIN, theme->PANEL_BG);
-        hw->tft.setTextDatum(textdatum_t::middle_left);
-        hw->tft.drawString(wifiReady ? "Wi-Fi Active" : (btReady ? "Bluetooth Active" : "No Connection"), 45, cardY + 25);
-
-        // URI Display
-        String uri = "Unavailable";
-        if (wifiReady) uri = WiFi.localIP().toString() + ":9909";
-        else if (btReady) uri = "BT: " + String(currentDIN); // Example BT URI
-
-        hw->tft.setTextColor(theme->TEXT_MUTED, theme->PANEL_BG);
-        hw->tft.drawString(uri, 30, cardY + 55);
-
-
-        if (wifiReady || btReady) {
-            drawButton(10, 170, w - 20, 45, "ENABLE DRIVER", theme->ACCENT_PRIMARY, theme->TEXT_MAIN);
-        } else {
-            // Disabled state visual
-             drawButton(10, 170, w - 20, 45, "No Link Available", theme->PANEL_SHADOW, theme->TEXT_MUTED);
-        }
-
-        // --- 3. NETWORK MANAGEMENT ---
-        int bottomY = 230;
-        int btnW = (w - 30) / 2;
-        
-        drawButton(10, bottomY, btnW, 45, "UNBIND", theme->ACCENT_ALERT, theme->TEXT_MAIN);
-        drawButton(20 + btnW, bottomY, btnW, 45, "DISCOVER", theme->ACCENT_WARN, theme->TEXT_MAIN); // Changed to WARN for contrast
-    }
-
-    void drawStatsPage() {
-        drawHeader("SYSTEM STATS", true, needsRedraw); // Title with Back button
-        int w = hw->tft.width();
-        int m = 10; // Margin
-
-        // --- SECTION 1: TRAFFIC DASHBOARD (Card) ---
-        int yTraffic = 60;
-        int hTraffic = 80;
-        
-        // Card Background
-        hw->tft.fillRoundRect(m, yTraffic, w - 2*m, hTraffic, 8, theme->PANEL_BG);
-        hw->tft.drawRoundRect(m, yTraffic, w - 2*m, hTraffic, 8, theme->BORDER_COLOR); // Subtle border
-
-        // Section Label
-        hw->tft.setTextColor(theme->ACCENT_PRIMARY, theme->PANEL_BG);
-        hw->tft.setTextDatum(textdatum_t::top_left);
-        hw->tft.drawString("MESSAGE TRAFFIC", m + 10, yTraffic + 5);
-
-        // 3 Columns: Sent | Recv | Routed
-        int colW = (w - 2*m) / 3;
-        
-        auto drawStatItem = [&](int idx, const char* label, uint32_t val, uint16_t color) {
-            int x = m + (idx * colW);
-            int center = x + (colW / 2);
-            int yVal = yTraffic + 30;
-            
-            // Value (Big Number)
-            hw->tft.setTextColor(color, theme->PANEL_BG);
-            hw->tft.setTextDatum(textdatum_t::top_center);
-            hw->tft.drawString(String(val), center, yVal);
-            
-            // Label (Small Text)
-            hw->tft.setTextColor(theme->TEXT_MUTED, theme->PANEL_BG);
-            hw->tft.drawString(label, center, yVal + 20);
-            
-            // Vertical Divider line (except for last item)
-            if(idx < 2) hw->tft.drawFastVLine(x + colW, yVal, 30, theme->BORDER_COLOR);
-        };
-
-        drawStatItem(0, "SENT", system->getNode()->getSystemStatistics(_cor_dme_sended), theme->TEXT_MAIN);
-        drawStatItem(1, "RECV", system->getNode()->getSystemStatistics(_cor_dme_received), theme->ACCENT_PRIMARY);
-        drawStatItem(2, "ROUT", system->getNode()->getSystemStatistics(_cor_dme_routed), theme->ACCENT_WARN);
-
-
-        // --- SECTION 2: SYSTEM HEALTH (2x2 Grid) ---
-        int ySys = 150;
-        int hSys = 90;
-        
-        hw->tft.fillRoundRect(m, ySys, w - 2*m, hSys, 8, theme->PANEL_BG);
-        
-        auto drawSysRow = [&](int row, const char* l1, String v1, const char* l2, String v2) {
-            int y = ySys + 20 + (row * 35);
-            int mid = w / 2;
-            
-            // Left Column
-            hw->tft.setTextColor(theme->TEXT_MUTED, theme->PANEL_BG);
-            hw->tft.setTextDatum(textdatum_t::top_left);
-            hw->tft.drawString(l1, m + 15, y);
-            
-
-            
-            if (row == 1) {
-                // clear area for UP text to avoid artifacts
-                hw->tft.drawRect(mid - 5, y, (w/2) - m - 10, 20, theme->PANEL_BG);
+        if (lv_tick_get() - last_tick > 1000) {
+            if (ram_chart && ram_series && !lv_obj_has_flag(stat_p, LV_OBJ_FLAG_HIDDEN)) {
+                uint32_t free_kb = esp_get_free_heap_size() / 1024;
+                lv_chart_set_next_value(ram_chart, ram_series, free_kb);
+                std::string s = std::to_string(free_kb / 1024) + "MB\nFree";
+                if(stat_lbl) lv_label_set_text(stat_lbl, s.c_str());
             }
-
-            hw->tft.setTextColor(theme->TEXT_MAIN, theme->PANEL_BG);
-            hw->tft.setTextDatum(textdatum_t::top_right);
-            hw->tft.drawString(v1, mid - 5, y);
-            
-
-            // Right Column
-            hw->tft.setTextColor(theme->TEXT_MUTED, theme->PANEL_BG);
-            hw->tft.setTextDatum(textdatum_t::top_left);
-            hw->tft.drawString(l2, mid + 10, y);
-            
-            hw->tft.setTextColor(theme->TEXT_MAIN, theme->PANEL_BG);
-            hw->tft.setTextDatum(textdatum_t::top_right);
-            hw->tft.drawString(v2, w - m - 15, y);
-        };
-
-        String heap = String(ESP.getFreeHeap()/1024) + "k";
-        String blk = String(ESP.getMaxAllocHeap()/1024) + "k";
-        String up = String(millis()/1000) + "s";
-        
-        drawSysRow(0, "Free:", heap, "Max:", blk);
-        drawSysRow(1, "Up:", up, "Ver:", system->getNode()->getVersion());
-        
-        // Vertical Split Line
-        hw->tft.drawFastVLine(w/2, ySys + 15, hSys - 30, theme->BORDER_COLOR);
-
-
-        // --- SECTION 3: SIGNAL VISUALIZER ---
-        int ySig = 250;
-        int hSig = 50;
-        hw->tft.fillRoundRect(m, ySig, w - 2*m, hSig, 8, theme->PANEL_BG);
-        
-        // Calculate Signal Bars (0 to 4)
-        int rssi = WiFi.RSSI();
-        int bars = 0;
-        if (WiFi.status() == WL_CONNECTED) {
-            if (rssi > -55) bars = 4;
-            else if (rssi > -65) bars = 3;
-            else if (rssi > -75) bars = 2;
-            else if (rssi > -85) bars = 1;
-        }
-
-        // Label
-        hw->tft.setTextColor(theme->TEXT_MAIN, theme->PANEL_BG);
-        hw->tft.setTextDatum(textdatum_t::middle_left);
-        hw->tft.drawString("Wi-Fi Signal", m + 15, ySig + hSig/2);
-        
-        // Draw Bars
-        int barStart = w - m - 70;
-        int barBottom = ySig + 35;
-        
-        for(int i=0; i<4; i++) {
-            int h = 8 + (i*6); // Ascending height
-            bool active = (i < bars);
-            uint16_t color = active ? (bars < 2 ? theme->ACCENT_ALERT : theme->ACCENT_PRIMARY) : theme->PANEL_SHADOW;
-            hw->tft.fillRect(barStart + (i*12), barBottom - h, 8, h, color);
-        }
-        
-        // dBm Text (Tiny)
-        hw->tft.setTextColor(theme->TEXT_MUTED, theme->PANEL_BG);
-        hw->tft.setTextDatum(textdatum_t::top_right);
-        hw->tft.drawString(String(rssi) + "dBm", w - m - 10, ySig + 10);
-    }
-
-    // --- TOUCH LOGIC ---
-
-    void handleMainTouch() {
-        if (!hw->isTouching) return;
-        delay(200);
-
-        int tx = hw->touchX;
-        int ty = hw->touchY;
-        
-        // Header / Back check (if needed later)
-        if (ty < 50 && tx < 50) { system->launchApp((u8_t)0); return; }
-
-        // Grid Hit Detection
-        // Approx Y range: Row 1 (60-150), Row 2 (160-250)
-        // Approx X range: Col 1 (0-120), Col 2 (120-240)
-        
-        int row = -1;
-        int col = -1;
-
-        if (ty > 60 && ty < 150) row = 0;
-        else if (ty > 160 && ty < 250) row = 1;
-
-        if (tx < 120) col = 0;
-        else col = 1;
-
-        if (row != -1 && col != -1) {
-            int index = (row * 2) + col;
-            
-            if (index == 0) { currentState = PAGE_WIFI_SCAN; needsRedraw = true; }
-            if (index == 1) { btEnabled = !btEnabled; needsRedraw = true; }
-            if (index == 2) { currentState = PAGE_DAAS; needsRedraw = true; }
-            if (index == 3) { currentState = PAGE_STATS; needsRedraw = true; }
+            last_tick = lv_tick_get();
         }
     }
-
-    void handleWifiTouch() {
-        if (!hw->isTouching) return;
-        delay(200);
-
-        if (hw->isTouchInRect(0, 0, 50, 40)) {
-            currentState = PAGE_MAIN; needsRedraw = true; return;
-        }
-
-        int index = (hw->touchY - 50) / ITEM_H;
-        if (index >= 0) {
-            targetSSID = WiFi.SSID(index);
-            inputBuffer = "";
-            currentState = PAGE_WIFI_KEYBOARD;
-            needsRedraw = true;
-        }
-    }
-
-    void handleDaasTouch() {
-        if (!hw->isTouching) return;
-        delay(200);
-        int w = hw->tft.width();
-
-        // Back Button (Top Left)
-        if (hw->touchY < 50 && hw->touchX < 50) {
-            currentState = PAGE_MAIN; needsRedraw = true; return;
-        }
-
-        bool wifiReady = (WiFi.status() == WL_CONNECTED);
-        bool btReady = btEnabled;
-
-        // ENABLE DRIVER BUTTON (Y: 170, H: 45)
-        if (hw->isTouchInRect(10, 170, w - 20, 45)) {
-            if (wifiReady) {
-                String uri = WiFi.localIP().toString() + ":9909";
-                system->getNode()->enableDriver(_LINK_INET4, uri.c_str());
-                ToastManager::getInstance()->show("Driver Enabled (Wi-Fi)", TOAST_INFO, 2500);
-                // Optional: Show visual feedback
-            } 
-            else if (btReady) {
-                // Assuming you have a specific driver constant for BT, e.g., _LINK_BLUETOOTH
-                // And a specific URI format
-                String btUri = String(currentDIN); 
-                system->getNode()->enableDriver(_LINK_BT, btUri.c_str()); 
-            }
-        }
-
-        // UNBIND (Bottom Left)
-        int bottomY = 230;
-        int btnW = (w - 30) / 2;
-        if (hw->isTouchInRect(10, bottomY, btnW, 45)) {
-            system->getNode()->unbindNetwork();
-            system->daasNetworkConnected = false;
-            needsRedraw = true;
-            ToastManager::getInstance()->show("Network Unbound", TOAST_INFO);
-        }
-
-        // DISCOVER (Bottom Right)
-        if (hw->isTouchInRect(20 + btnW, bottomY, btnW, 45)) {
-            system->getNode()->discovery();
-            ToastManager::getInstance()->show("Discovery Started", TOAST_INFO, 1000);
-        }
-    }
-
-    void handleStatsTouch() {
-        if (!hw->isTouching) return;
-        delay(200);
-        if (hw->isTouchInRect(0, 0, 100, 40)) { 
-            currentState = PAGE_MAIN; needsRedraw = true;
-        }
-    }
+    
+    void onExit() override { if (screen) lv_obj_del(screen); screen = nullptr; }
+    void onDraw() override {}
 };

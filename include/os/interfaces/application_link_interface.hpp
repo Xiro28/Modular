@@ -1,5 +1,6 @@
 #pragma once
-#include <Arduino.h>
+
+#include <string>
 
 enum AppType {
     APP_INTERNAL, // Hardcoded (Settings, Terminal)
@@ -7,9 +8,10 @@ enum AppType {
 };
 
 struct AppShortcut {
-    String name;       // Display Name (e.g., "Doom")
-    String iconPath;   // Path to .bmp/.jpg (optional, future use)
+    std::string name;       // Display Name (e.g., "Doom")
+    std::string iconPath;   // Path to .bmp/.jpg (optional, future use)
     uint16_t color;    // Fallback color if no icon image
     AppType type;
-    String execPath;   // Path to executable (e.g., "/sd/doom.bin")
+    std::string execPath;   // Path to executable (e.g., "/sd/doom.bin")
+    uint8_t id;          // Unique App ID (assigned at registration)
 };

@@ -6,3 +6,10 @@
 include/daas/daas.hpp
 include/daas/daas_types.hpp
 lib/libdaas.a
+components/*
+build_slave/*
+managed_components/*
+build/*
+.DS_Store
+*.bin
+*.lock

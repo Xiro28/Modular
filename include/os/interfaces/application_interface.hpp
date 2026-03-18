@@ -15,12 +15,12 @@ protected:
     Kernel* system;
     ThemePalette* theme;
 
-    u8_t pid;
-    u8_t appID;
+    uint8_t pid;
+    uint8_t appID;
     bool needsRedraw = true;
 
     Application() : pid(0), appID(255) {} // Default constructor
-    Application(u8_t id) : pid(0), appID(id) {} // Constructor with App ID
+    Application(uint8_t id) : pid(0), appID(id) {} // Constructor with App ID
 
 public:
     // Setup references when App starts
@@ -31,9 +31,9 @@ public:
     void forceRedraw() {
         needsRedraw = true;
     }
-    void setPID(u8_t id) { pid = id; }
-    u8_t getPID() const { return pid; }
-    u8_t getAppID() const { return appID; }
+    void setPID(uint8_t id) { pid = id; }
+    uint8_t getPID() const { return pid; }
+    uint8_t getAppID() const { return appID; }
 
 
     virtual void onStart() = 0;   // Setup

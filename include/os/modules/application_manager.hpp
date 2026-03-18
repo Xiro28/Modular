@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
-#include <ArduinoJson.h>
+#include <string>
+//#include <ArduinoJson.h>
 
 #include "hal/hal.hpp"
 #include "../interfaces/application_link_interface.hpp"
@@ -21,11 +22,11 @@ public:
         apps.clear();
         
         // 1. Always add Hardcoded System Apps first
-        apps.push_back({"Settings", "", 0x738E, APP_INTERNAL, "SYS_SETTINGS"});
-        apps.push_back({"Chat", "", 0x3333, APP_INTERNAL, "SYS_CHAT"});
+        apps.push_back({"Settings", "", 0x738E, APP_INTERNAL, "SYS_SETTINGS", 1});
+        apps.push_back({"Chat", "", 0x3333, APP_INTERNAL, "SYS_CHAT", 2});
 
         // 2. Load External Apps from SD
-        if (hw->sdAvailable && SD.exists(REGISTRY_FILE)) {
+        /*if (hw->sdAvailable && SD.exists(REGISTRY_FILE)) {
             File file = SD.open(REGISTRY_FILE, "r");
             if (file) {
                 DynamicJsonDocument doc(2048);
@@ -34,19 +35,19 @@ public:
                     JsonArray array = doc.as<JsonArray>();
                     for (JsonObject obj : array) {
                         AppShortcut a;
-                        a.name = obj["name"].as<String>();
+                        a.name = obj["name"].as<std::string>();
                         a.color = obj["color"];
                         a.type = APP_EXTERNAL;
-                        a.execPath = obj["path"].as<String>();
+                        a.execPath = obj["path"].as<std::string>();
                         apps.push_back(a);
                     }
                 }
                 file.close();
             }
-        }
+        }*/
     }
 
-    void installApp(String name, String path, uint16_t color) {
+    void installApp(std::string name, std::string path, uint16_t color) {
         // Add to list
         AppShortcut newApp = {name, "", color, APP_EXTERNAL, path};
         apps.push_back(newApp);
@@ -54,9 +55,9 @@ public:
     }
 
     void saveRegistry() {
-        if (!hw->sdAvailable) return;
+        //if (!hw->sdAvailable) return;
 
-        DynamicJsonDocument doc(2048);
+        /*DynamicJsonDocument doc(2048);
         JsonArray array = doc.to<JsonArray>();
 
         // Only save EXTERNAL apps to JSON
@@ -71,7 +72,7 @@ public:
 
         File file = SD.open(REGISTRY_FILE, "w");
         serializeJson(doc, file);
-        file.close();
+        file.close();*/
     }
 
     std::vector<AppShortcut>& getApps() { return apps; }

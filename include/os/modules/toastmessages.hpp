@@ -1,134 +1,60 @@
 #pragma once
-#include "../../hal/hal.hpp"
-#include "../../themes/theme_structure.hpp"   
+#include <string>
+#include "lvgl.h"
 
-enum ToastType {
-    TOAST_INFO,
-    TOAST_SUCCESS,
-    TOAST_ERROR,
-    TOAST_WARNING
-};
+enum ToastType { TOAST_INFO, TOAST_WARNING, TOAST_ERROR };
 
 class ToastManager {
-private:    
-    HardwareManager* hw;
-    ThemePalette* theme;
+private:
+    lv_obj_t* toast_label = nullptr;
+    lv_timer_t* toast_timer = nullptr;
 
-    // Stato del Toast
-    String message;
-    uint16_t msgColor;
-    uint16_t bgColor;
-    
-    bool isVisible = false;
-    unsigned long startTime = 0;
-    unsigned long duration = 2000;
-    
-    // Animazione
-    float currentY;  // Posizione Y attuale
-    float targetY;   // Posizione Y target (visibile)
-    float hiddenY;   // Posizione Y nascosta (fuori schermo)
-    bool lastState = false;
-    bool changed = false;
-
-    // Costruttore privato (Singleton)
     ToastManager() {}
 
+    static void timer_cb(lv_timer_t* timer) {
+        ToastManager* tm = (ToastManager*)timer->user_data;
+        if (tm->toast_label) {
+            lv_obj_del(tm->toast_label);
+            tm->toast_label = nullptr;
+        }
+        lv_timer_del(timer);
+        tm->toast_timer = nullptr;
+    }
+
 public:
-    // Accesso Singleton
     static ToastManager* getInstance() {
-        static ToastManager* instance = nullptr;
-        if (instance == nullptr) {
-            instance = new ToastManager();
-        }
-        return instance;
+        static ToastManager instance; // Clean Singleton pattern
+        return &instance;
     }
 
-    // Inizializzazione (da chiamare nel Kernel::boot)
-    void init(HardwareManager* h, ThemePalette* t) {
-        hw = h;
-        theme = t;
-        hiddenY = hw->tft.height() + 10; // Appena sotto lo schermo
-        targetY = hw->tft.height() - 60; // Posizione visibile (dal basso)
-        currentY = hiddenY;
-    }
+    // Stubs to keep kernel.cpp happy
+    void init(void* hw, void* theme) {}
+    void update() {}
+    void draw() {}
 
-    // Mostra un messaggio
-    void show(String msg, ToastType type = TOAST_INFO, int ms = 2500) {
-        message = msg;
-        duration = ms;
-        startTime = millis();
-        isVisible = true;
-        changed = true;
+    void show(std::string msg, ToastType type = TOAST_INFO, int ms = 2500) {
+        if (toast_label) lv_obj_del(toast_label);
+        if (toast_timer) lv_timer_del(toast_timer);
 
-
-        // Imposta colori in base al tipo
-        switch (type) {
-            case TOAST_SUCCESS: msgColor = theme->TEXT_MAIN; bgColor = 0x07E0; /* Verde scuro */ break; // O usa theme->ACCENT_PRIMARY
-            case TOAST_ERROR:   msgColor = theme->TEXT_MAIN; bgColor = theme->ACCENT_ALERT; break;
-            case TOAST_WARNING: msgColor = theme->BG_COLOR;  bgColor = theme->ACCENT_WARN; break;
-            case TOAST_INFO:    
-            default:            msgColor = theme->TEXT_MAIN; bgColor = theme->PANEL_SHADOW; break;
-        }
+        // Create a floating label on the top-most system layer
+        toast_label = lv_label_create(lv_layer_sys()); 
+        lv_label_set_text(toast_label, msg.c_str());
         
-        // Se vuoi sovrascrivere con i colori del tema corrente per coerenza:
-        if (type == TOAST_SUCCESS) bgColor = theme->ACCENT_PRIMARY;
-    }
-
-    // Da chiamare nel loop principale (disegna sopra tutto)
-    void update() {
-        if (!hw) return;
-
-        unsigned long now = millis();
-
-        // 1. Logica di Timeout
-        if (isVisible && (now - startTime > duration)) {
-            isVisible = false; // Inizia a nascondersi
-        }
-
-        // 2. Calcolo Animazione (Slide semplice)
-        float goal = isVisible ? targetY : hiddenY;
+        lv_obj_set_style_bg_opa(toast_label, LV_OPA_COVER, 0);
         
-
-        currentY = goal;
-
-        if (lastState != isVisible || changed)
-        {
-            draw();
-            changed = false;
-        }
-        lastState = isVisible;
-    }
-
-    bool isActive() const {
-        return isVisible || (currentY < hiddenY - 1);
-    }
-
-private:
-    void draw() {
-        // Calcola larghezza dinamica in base al testo
-        int textW = hw->tft.textWidth(message);
-        int padding = 30;
-        int toastW = textW + padding;
-        int toastH = 40;
+        uint32_t bgColor = 0x333333; // Default Dark
+        if(type == TOAST_ERROR) bgColor = 0xFF0000;
+        if(type == TOAST_WARNING) bgColor = 0xFFA500;
         
-        // Centra orizzontalmente
-        int screenW = hw->tft.width();
-        int x = (screenW - toastW) / 2;
-        int y = (int)currentY;
+        lv_obj_set_style_bg_color(toast_label, lv_color_hex(bgColor), 0);
+        lv_obj_set_style_text_color(toast_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_pad_all(toast_label, 15, 0);
+        lv_obj_set_style_radius(toast_label, 10, 0);
+        
+        // Center at the bottom of the screen
+        lv_obj_align(toast_label, LV_ALIGN_BOTTOM_MID, 0, -20);
 
-        // 1. Ombra (Shadow)
-        hw->tft.fillRoundRect(x + 2, y + 2, toastW, toastH, 20, 0x0000); // Nero puro o PANEL_SHADOW
-
-        // 2. Sfondo Toast
-        hw->tft.fillRoundRect(x, y, toastW, toastH, 20, bgColor);
-
-        // 3. Bordo sottile (Opzionale, per eleganza su sfondo scuro)
-        hw->tft.drawRoundRect(x, y, toastW, toastH, 20, theme->TEXT_MUTED);
-
-        // 4. Testo
-        hw->tft.setTextColor(msgColor, bgColor);
-        hw->tft.setTextDatum(textdatum_t::middle_center);
-        hw->tft.drawString(message, x + toastW/2, y + toastH/2);
-        hw->tft.setTextDatum(textdatum_t::top_left); // Reset
+        // Start destruction timer
+        toast_timer = lv_timer_create(timer_cb, ms, this);
     }
 };

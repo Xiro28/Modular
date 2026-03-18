@@ -30,7 +30,7 @@ public:
             auto cfg = _bus_instance.config(); // バス設定用の構造体を取得します。
 
             // SPIバスの設定
-            cfg.spi_host = SPI2_HOST;  // 使用するSPIを選択  (VSPI_HOST or HSPI_HOST)
+            cfg.spi_host = HSPI_HOST;  // 使用するSPIを選択  (VSPI_HOST or HSPI_HOST)
             cfg.spi_mode = 0;          // SPI通信モードを設定 (0 ~ 3)
             cfg.freq_write = 40000000; // 送信時のSPIクロック (最大80MHz, 80MHzを整数で割った値に丸められます)
             cfg.freq_read = 16000000;  // 受信時のSPIクロック
@@ -98,7 +98,7 @@ public:
             cfg.offset_rotation = 0; // 表示とタッチの向きのが一致しない場合の調整 0~7の値で設定
 
             // SPI接続の場合
-            cfg.spi_host = SPI3_HOST;  // 使用するSPIを選択 (HSPI_HOST or VSPI_HOST)
+            cfg.spi_host = VSPI_HOST;  // 使用するSPIを選択 (HSPI_HOST or VSPI_HOST)
             cfg.freq = 1000000;        // SPIクロックを設定
             cfg.pin_sclk = TOUCH_SCK;  // SCLKが接続されているピン番号
             cfg.pin_mosi = TOUCH_MOSI; // MOSIが接続されているピン番号

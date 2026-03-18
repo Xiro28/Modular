@@ -1,6 +1,4 @@
 #pragma once
-#include <Arduino.h>
-#include <LovyanGFX.hpp>
 
 /*struct ThemePalette {
     uint16_t BG_COLOR;

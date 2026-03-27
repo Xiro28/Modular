@@ -4,7 +4,7 @@ Modular is an experimental project designed to explore and demonstrate the lates
 
 At its core, Modular is not just a product—it is a **proof of concept** aimed at illustrating how devices and systems can become more adaptive, self-sufficient, and interconnected in dynamic environments.
 
-Learn more about DaaS here: (Sebyone)[https://sebyone.it/]
+Learn more about DaaS here: https://sebyone.it/
 
 ---
 
